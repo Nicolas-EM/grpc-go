@@ -19,6 +19,7 @@ package cdsbalancer
 
 import (
 	"fmt"
+	"slices"
 
 	"google.golang.org/grpc/internal/xds/clients"
 	"google.golang.org/grpc/internal/xds/xdsclient/xdsresource"
@@ -31,8 +32,12 @@ import (
 // struct keeps state between generate() calls, and a later generate() might
 // return names returned by the previous call.
 type nameGenerator struct {
-	prevLocalitiesToChildNames map[clients.Locality]string // locality to child name mapping generated for the previous update
-	prevChildNames             []string                    // prioritized list of child names generated for the previous update
+	// prevLocalitiesToChildNames maps each locality to the child names of the
+	// priorities it appeared under in the previous update, from the highest to
+	// the lowest priority. A locality can appear under more than one priority
+	// (gRFC A52).
+	prevLocalitiesToChildNames map[clients.Locality][]string
+	prevChildNames             []string // prioritized list of child names generated for the previous update
 	prefix                     uint64
 	nextID                     uint64
 }
@@ -53,10 +58,15 @@ func newNameGenerator(prefix uint64) *nameGenerator {
 // - update 2: [[L1], [L2], [L3]] --> ["0", "1", "2"]
 // - update 3: [[L1, L2], [L3]] --> ["0", "2"]   (Two priorities were merged)
 // - update 4: [[L1], [L4]] --> ["0", "3",]      (A priority was split, and a new priority was added)
+//
+// A locality that appears under more than one priority keeps a name for each
+// of them, so the names stay the same between identical updates:
+// - update 1: [[L1], [L1]] --> ["0", "1"]
+// - update 2: [[L1], [L1]] --> ["0", "1"]
 func (ng *nameGenerator) generate(priorities [][]xdsresource.Locality) []string {
 	ret := make([]string, len(priorities))
 	usedNames := make(map[string]bool)
-	newNames := make(map[clients.Locality]string)
+	newNames := make(map[clients.Locality][]string)
 
 	// Pass 1: Same priority index match.
 	for i, priority := range priorities {
@@ -65,7 +75,7 @@ func (ng *nameGenerator) generate(priorities [][]xdsresource.Locality) []string 
 		}
 		targetName := ng.prevChildNames[i]
 		for _, locality := range priority {
-			if name, ok := ng.prevLocalitiesToChildNames[locality.ID]; ok && name == targetName {
+			if slices.Contains(ng.prevLocalitiesToChildNames[locality.ID], targetName) {
 				ret[i] = targetName
 				usedNames[targetName] = true
 				break
@@ -78,12 +88,13 @@ func (ng *nameGenerator) generate(priorities [][]xdsresource.Locality) []string 
 		if ret[i] != "" {
 			continue
 		}
+	nextPriority:
 		for _, locality := range priority {
-			if name, ok := ng.prevLocalitiesToChildNames[locality.ID]; ok {
+			for _, name := range ng.prevLocalitiesToChildNames[locality.ID] {
 				if !usedNames[name] {
 					ret[i] = name
 					usedNames[name] = true
-					break
+					break nextPriority
 				}
 			}
 		}
@@ -102,7 +113,7 @@ func (ng *nameGenerator) generate(priorities [][]xdsresource.Locality) []string 
 	// Update state.
 	for i, priority := range priorities {
 		for _, l := range priority {
-			newNames[l.ID] = ret[i]
+			newNames[l.ID] = append(newNames[l.ID], ret[i])
 		}
 	}
 	ng.prevLocalitiesToChildNames = newNames
