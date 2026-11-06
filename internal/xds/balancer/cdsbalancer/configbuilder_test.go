@@ -888,6 +888,52 @@ func (s) TestBuildClusterImplConfigForEDS_PickFirstWeightedShuffling_Disabled(t 
 	}
 }
 
+// TestBuildClusterImplConfigForEDS_SameLocalityAtTwoPriorities tests that when
+// a locality appears under two priorities (gRFC A52), each priority gets only
+// its own endpoints, and the priority names do not change between identical
+// updates.
+func (s) TestBuildClusterImplConfigForEDS_SameLocalityAtTwoPriorities(t *testing.T) {
+	testutils.SetEnvConfig(t, &envconfig.PickFirstWeightedShuffling, false)
+
+	// The endpoints of P1 have different addresses, but the same locality as
+	// the endpoints of P0.
+	locP0 := makeLocality(0, 1, 0, 1)
+	locP1 := makeLocality(1, 1, 1, 1)
+	locP1.ID = locP0.ID
+
+	config := &xdsresource.ClusterConfig{
+		Cluster: &xdsresource.ClusterUpdate{
+			ClusterName:    testClusterName,
+			ClusterType:    xdsresource.ClusterTypeEDS,
+			EDSServiceName: testEDSServiceName,
+		},
+		EndpointConfig: &xdsresource.EndpointConfig{
+			EDSUpdate: &xdsresource.EndpointsUpdate{
+				Localities: []xdsresource.Locality{locP0, locP1},
+			},
+		},
+	}
+	wantNames := []string{"priority-0-0", "priority-0-1"}
+	wantEndpoints := []resolver.Endpoint{
+		testEndpointWithAttrs(locP0.Endpoints[0].ResolverEndpoint, 1, 1, "priority-0-0", &locP0.ID),
+		testEndpointWithAttrs(locP1.Endpoints[0].ResolverEndpoint, 1, 1, "priority-0-1", &locP1.ID),
+	}
+
+	ng := newNameGenerator(0)
+	for i := range 2 {
+		gotNames, _, gotEndpoints, err := buildClusterImplConfigForEDS(ng, config, nil)
+		if err != nil {
+			t.Fatalf("update %d: buildClusterImplConfigForEDS() failed: %v", i, err)
+		}
+		if diff := cmp.Diff(wantNames, gotNames); diff != "" {
+			t.Errorf("update %d: buildClusterImplConfigForEDS() names diff (-want +got) %v", i, diff)
+		}
+		if diff := cmp.Diff(wantEndpoints, gotEndpoints, endpointCmpOpts); diff != "" {
+			t.Errorf("update %d: buildClusterImplConfigForEDS() endpoints diff (-want +got) %v", i, diff)
+		}
+	}
+}
+
 // TestBuildClusterImplConfigForEDS_PickFirstWeightedShuffling_Enabled tests
 // buildClusterImplConfigForEDS when pick_first weighted shuffling is enabled.
 func (s) TestBuildClusterImplConfigForEDS_PickFirstWeightedShuffling_Enabled(t *testing.T) {

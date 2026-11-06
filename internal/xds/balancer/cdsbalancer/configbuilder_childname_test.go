@@ -296,6 +296,52 @@ func (s) Test_nameGenerator_generate(t *testing.T) {
 				},
 			},
 		},
+		{
+			// gRFC A52 allows a locality to appear under multiple priorities.
+			// For example, a control plane can drain endpoints by moving them
+			// to a lower priority in the same locality.
+			name: "same locality under two priorities is stable",
+			steps: []struct {
+				input [][]xdsresource.Locality
+				want  []string
+			}{
+				{
+					input: [][]xdsresource.Locality{
+						{{ID: clients.Locality{Zone: "L0"}}},
+						{{ID: clients.Locality{Zone: "L0"}}},
+					},
+					want: []string{"priority-0-0", "priority-0-1"},
+				},
+				{
+					input: [][]xdsresource.Locality{
+						{{ID: clients.Locality{Zone: "L0"}}},
+						{{ID: clients.Locality{Zone: "L0"}}},
+					},
+					want: []string{"priority-0-0", "priority-0-1"},
+				},
+			},
+		},
+		{
+			name: "locality removed from one of two priorities",
+			steps: []struct {
+				input [][]xdsresource.Locality
+				want  []string
+			}{
+				{
+					input: [][]xdsresource.Locality{
+						{{ID: clients.Locality{Zone: "L0"}}},
+						{{ID: clients.Locality{Zone: "L0"}}},
+					},
+					want: []string{"priority-0-0", "priority-0-1"},
+				},
+				{
+					input: [][]xdsresource.Locality{
+						{{ID: clients.Locality{Zone: "L0"}}},
+					},
+					want: []string{"priority-0-0"},
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
